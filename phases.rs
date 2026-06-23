@@ -11,10 +11,10 @@ const ONE_HOUR: u64 = 3600;
 pub const PROD_RACES_PER_DAY: u64 = 3;
 pub const PROD_BLOCK_SECS: u64 = 8 * ONE_HOUR;
 pub const PROD_LIVE_SECS: u64 = ONE_HOUR;
-/// Combined entry, side bets, and crowd commits.
-pub const PROD_PREP_SECS: u64 = 6 * ONE_HOUR;
-/// Global reveal grace after prep — each actor also waits `REVEAL_DELAY_SECS` after their commit.
-pub const PROD_REVEAL_GRACE_SECS: u64 = ONE_HOUR;
+/// Combined entry, side bets, and crowd commits (GET HYPED during entry).
+pub const PROD_PREP_SECS: u64 = 3 * ONE_HOUR;
+/// Global reveal window after prep — each actor also waits `REVEAL_DELAY_SECS` after their commit.
+pub const PROD_REVEAL_GRACE_SECS: u64 = 3 * ONE_HOUR;
 /// Minimum delay between a commit and that actor's reveal (anti copy-reveal).
 pub const REVEAL_DELAY_SECS: u64 = 5 * SECONDS_PER_MINUTE;
 
@@ -111,7 +111,7 @@ pub fn compute_production_phases_from_block(block_start: u64) -> PhaseTimestamps
     }
 }
 
-/// Production: 3 × 8h blocks per UTC day — 6h prep, 1h reveal grace, 1h live.
+/// Production: 3 × 8h blocks per UTC day — 3h prep, 3h reveal, 1h live.
 #[cfg(test)]
 pub fn compute_production_phases(now: Timestamp) -> PhaseTimestamps {
     compute_production_phases_from_block(current_production_block_start(now.seconds()))
@@ -426,12 +426,14 @@ mod tests {
     }
 
     #[test]
-    fn production_live_window_is_final_hour() {
+    fn production_live_window_is_final_two_hours_in_eight_hour_block() {
         let day_start = 1_700_000_000 - (1_700_000_000 % DAY_SECS);
         let schedule = compute_production_phases_from_block(day_start);
         let live_start = schedule.crowd_reveal_close.seconds();
         let settle = schedule.phase_3_close.seconds();
-        assert_eq!(settle - live_start, PROD_LIVE_SECS);
+        // 8h block: 3h prep + 3h reveal → 2h live before settlement opens at block end.
+        assert_eq!(settle - live_start, 2 * ONE_HOUR);
+        assert_eq!(settle - day_start, PROD_BLOCK_SECS);
     }
 
     #[test]

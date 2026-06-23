@@ -1,7 +1,7 @@
 #[cfg(not(feature = "library"))]
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
-use crate::phases::{apply_phase_timestamps, initial_race_phases};
+use crate::phases::{apply_phase_timestamps, compute_production_phases_from_block, initial_race_phases, PROD_BLOCK_SECS};
 use crate::state::{Config, RaceGlobal, CONFIG, RACE_GLOBAL};
 use crate::{
     betting, claim, crowd, preview, query, race, race_history, receive_nft, settlement, vault,
@@ -79,6 +79,20 @@ fn ensure_species_config(deps: &DepsMut, config: &mut Config) -> StdResult<()> {
     Ok(())
 }
 
+/// Re-anchor an in-flight production race to the current schedule for its UTC block.
+/// Preserves runners, pools, and side bets — only phase timestamps change.
+fn reschedule_active_production_race(race: &mut RaceGlobal) {
+    let block_end = race.phase_3_close.seconds();
+    if block_end <= PROD_BLOCK_SECS {
+        return;
+    }
+    let block_start = block_end - PROD_BLOCK_SECS;
+    apply_phase_timestamps(
+        race,
+        compute_production_phases_from_block(block_start),
+    );
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> StdResult<Response> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
@@ -114,6 +128,8 @@ pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> StdResult<Response>
                 &mut race,
                 initial_race_phases(env.block.time, false),
             );
+        } else if !config.test_mode {
+            reschedule_active_production_race(&mut race);
         } else if race.phase_3_close <= race.crowd_reveal_close {
             let extra = if config.test_mode {
                 crate::phases::TEST_PREVIEW_LIVE_SECS
