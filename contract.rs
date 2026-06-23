@@ -2,9 +2,9 @@
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::phases::{apply_phase_timestamps, compute_production_phases_from_block, initial_race_phases, PROD_BLOCK_SECS};
-use crate::state::{Config, RaceGlobal, CONFIG, RACE_GLOBAL};
+use crate::state::{Config, RaceGlobal, CONFIG, ENROLLING_RACE, RACE_GLOBAL};
 use crate::{
-    betting, claim, crowd, preview, query, race, race_history, receive_nft, settlement, vault,
+    betting, claim, crowd, preview, query, race, race_history, receive_nft, settlement, slots, vault,
 };
 
 use cosmwasm_std::{entry_point, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, Uint128};
@@ -142,6 +142,7 @@ pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> StdResult<Response>
         }
         RACE_GLOBAL.save(deps.storage, &race)?;
     }
+    ENROLLING_RACE.remove(deps.storage);
     Ok(Response::new()
         .add_attribute("action", "migrate")
         .add_attribute("test_mode", "false"))
@@ -265,6 +266,7 @@ pub fn execute(
             claim::execute_claim_wager(deps, env, info, race_id)
         }
         ExecuteMsg::AdvanceRace {} => settlement::execute_advance_race(deps, env, info),
+        ExecuteMsg::OpenNextRace {} => slots::execute_open_next_race(deps, env, info),
         ExecuteMsg::AdminSetTestPhases {
             phase_1_close,
             phase_2_close,
@@ -299,6 +301,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => query::query_config(deps),
         QueryMsg::RaceGlobal {} => query::query_race_global(deps),
+        QueryMsg::EnrollingRace {} => query::query_enrolling_race(deps),
         QueryMsg::User { addr } => query::query_user(deps, addr),
         QueryMsg::RaceEntry { race_id, addr } => query::query_race_entry(deps, race_id, addr),
         QueryMsg::RaceRoster { race_id } => query::query_race_roster(deps, race_id),

@@ -1,17 +1,18 @@
 use crate::error::ContractError;
 use crate::msg::EnterRaceMsg;
-use crate::phases::{anchor_test_race_phases, is_entry_open, MAX_RUNNERS};
+use crate::phases::MAX_RUNNERS;
+use crate::slots::{entry_slot, load_slots, on_first_runner, save_slot_race, EntrySlot};
 use crate::species::species_from_contract;
 use crate::species::species_label;
 use crate::state::{
-    default_user_profile, RaceEntry, CONFIG, RACE_ENTRIES, RACE_GLOBAL, USER_PROFILES,
+    default_user_profile, RaceEntry, RaceGlobal, CONFIG, RACE_ENTRIES, USER_PROFILES,
 };
 use crate::vault::{debit_vault_storage, optional_exact_native_coin};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use cosmwasm_std::{from_json, Addr};
 
 pub fn execute_receive_nft(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     sender: Addr,
@@ -19,11 +20,10 @@ pub fn execute_receive_nft(
     msg: cosmwasm_std::Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    let mut race = RACE_GLOBAL.load(deps.storage)?;
+    let ctx = load_slots(deps.as_ref())?;
+    let slot = entry_slot(&ctx, env.block.time).ok_or(ContractError::WrongPhase {})?;
+    let mut race = race_for_slot_mut(&ctx, slot);
 
-    if !is_entry_open(env.block.time, &race) {
-        return Err(ContractError::WrongPhase {});
-    }
     if race.total_runners >= MAX_RUNNERS {
         return Err(ContractError::RaceFull {});
     }
@@ -31,7 +31,8 @@ pub fn execute_receive_nft(
     let species = species_from_contract(&config, &info.sender)
         .ok_or(ContractError::InvalidNftContract {})?;
 
-    let key = (race.current_race_id, sender.clone());
+    let race_id = race.current_race_id;
+    let key = (race_id, sender.clone());
     if RACE_ENTRIES.has(deps.storage, key.clone()) {
         return Err(ContractError::AlreadyEntered {});
     }
@@ -71,10 +72,10 @@ pub fn execute_receive_nft(
     RACE_ENTRIES.save(deps.storage, key, &entry)?;
     let first_runner = race.total_runners == 0;
     race.total_runners += 1;
-    if config.test_mode && first_runner {
-        anchor_test_race_phases(&mut race, env.block.time);
+    if first_runner {
+        on_first_runner(&mut race, config.test_mode, env.block.time);
     }
-    RACE_GLOBAL.save(deps.storage, &race)?;
+    save_slot_race(&mut deps, slot, race)?;
 
     if !USER_PROFILES.has(deps.storage, sender.clone()) {
         USER_PROFILES.save(deps.storage, sender.clone(), &default_user_profile())?;
@@ -83,5 +84,16 @@ pub fn execute_receive_nft(
     Ok(Response::new()
         .add_attribute("action", "enter_race")
         .add_attribute("player", sender)
+        .add_attribute("race_id", race_id.to_string())
         .add_attribute("species", species_label(entry.species)))
+}
+
+fn race_for_slot_mut(ctx: &crate::slots::SlotContext, slot: EntrySlot) -> RaceGlobal {
+    match slot {
+        EntrySlot::Running => ctx.running.clone(),
+        EntrySlot::Enrolling => ctx
+            .enrolling
+            .clone()
+            .expect("enrolling slot without enrolling race"),
+    }
 }

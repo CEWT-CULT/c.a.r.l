@@ -1,12 +1,13 @@
 use crate::error::ContractError;
-use crate::phases::{is_crowd_commit_open, is_crowd_reveal_open, user_reveal_allowed, MAX_CROWD_ENTROPY};
+use crate::phases::{is_crowd_reveal_open, user_reveal_allowed, MAX_CROWD_ENTROPY};
 use crate::settlement::crowd_salt_commitment;
+use crate::slots::{crowd_commit_slot, load_slots, race_for_slot, save_slot_race};
 use crate::state::{CrowdEntropy, CONFIG, CROWD_ENTROPY, RACE_GLOBAL, SIDE_BETS};
 use crate::vault::require_no_native_funds;
 use cosmwasm_std::{Binary, DepsMut, Env, MessageInfo, Response};
 
 pub fn execute_commit_crowd_entropy(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     commitment: Binary,
@@ -17,10 +18,10 @@ pub fn execute_commit_crowd_entropy(
     }
 
     let config = CONFIG.load(deps.storage)?;
-    let mut race = RACE_GLOBAL.load(deps.storage)?;
-    if !is_crowd_commit_open(env.block.time, &race, config.test_mode) {
-        return Err(ContractError::WrongPhase {});
-    }
+    let ctx = load_slots(deps.as_ref())?;
+    let slot = crowd_commit_slot(&ctx, env.block.time, config.test_mode)
+        .ok_or(ContractError::WrongPhase {})?;
+    let mut race = race_for_slot(&ctx, slot).clone();
 
     let race_id = race.current_race_id;
     let bet_key = (race_id, info.sender.clone());
@@ -44,7 +45,7 @@ pub fn execute_commit_crowd_entropy(
     };
     CROWD_ENTROPY.save(deps.storage, crowd_key, &row)?;
     race.crowd_commit_count += 1;
-    RACE_GLOBAL.save(deps.storage, &race)?;
+    save_slot_race(&mut deps, slot, race)?;
 
     Ok(Response::new()
         .add_attribute("action", "commit_crowd_entropy")

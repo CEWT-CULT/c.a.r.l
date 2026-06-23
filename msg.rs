@@ -71,6 +71,8 @@ pub enum ExecuteMsg {
     ClaimRacerNft { race_id: u64 },
     /// Pull-pattern side-bet payout after settlement (or rain-out refund).
     ClaimWager { race_id: u64 },
+    /// Permissionless — opens the next race for entry once the running race prep closes.
+    OpenNextRace {},
     /// Permissionless — rolls the game to the next race cycle.
     AdvanceRace {},
     AdminSetTestPhases {
@@ -178,6 +180,7 @@ pub struct CrowdEntropyDeskResponse {
 pub enum QueryMsg {
     #[returns(crate::state::Config)] Config {},
     #[returns(crate::state::RaceGlobal)] RaceGlobal {},
+    #[returns(Option<crate::state::RaceGlobal>)] EnrollingRace {},
     #[returns(UserResponse)] User { addr: Addr },
     #[returns(crate::state::RaceEntry)] RaceEntry { race_id: u64, addr: Addr },
     #[returns(Vec<RosterEntry>)] RaceRoster { race_id: u64 },

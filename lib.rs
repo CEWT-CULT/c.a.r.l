@@ -13,6 +13,7 @@ mod race_history;
 mod receive_nft;
 mod preview;
 mod settlement;
+mod slots;
 mod species;
 mod vault;
 

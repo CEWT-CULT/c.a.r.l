@@ -3,8 +3,8 @@ use crate::phases::{current_phase, MAX_CROWD_ENTROPY};
 use crate::race_history::query_race_history_paginated;
 use crate::settlement::{distinct_bet_types, is_one_sided_market};
 use crate::state::{
-    default_user_profile, default_users, CONFIG, CROWD_ENTROPY, RACE_ENTRIES, RACE_GLOBAL,
-    RACE_RESULTS, RACE_SIDE_BET_SETTLEMENT, SIDE_BETS, USER_PROFILES, USERS,
+    default_user_profile, default_users, CONFIG, CROWD_ENTROPY, ENROLLING_RACE, RACE_ENTRIES,
+    RACE_GLOBAL, RACE_RESULTS, RACE_SIDE_BET_SETTLEMENT, SIDE_BETS, USER_PROFILES, USERS,
 };
 use cosmwasm_std::{to_json_binary, Addr, Binary, Deps, Env, Order, StdResult, Uint128};
 
@@ -15,6 +15,11 @@ pub fn query_config(deps: Deps) -> StdResult<Binary> {
 
 pub fn query_race_global(deps: Deps) -> StdResult<Binary> {
     let race = RACE_GLOBAL.load(deps.storage)?;
+    to_json_binary(&race)
+}
+
+pub fn query_enrolling_race(deps: Deps) -> StdResult<Binary> {
+    let race = ENROLLING_RACE.may_load(deps.storage)?.flatten();
     to_json_binary(&race)
 }
 

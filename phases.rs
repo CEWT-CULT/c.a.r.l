@@ -111,6 +111,22 @@ pub fn compute_production_phases_from_block(block_start: u64) -> PhaseTimestamps
     }
 }
 
+/// Pipeline enrolling race: prep starts when the running race prep closes; settle aligns to the next UTC block.
+pub fn compute_pipeline_enrolling_phases(running: &RaceGlobal, spawn_secs: u64) -> PhaseTimestamps {
+    let next_block = running.phase_3_close.seconds();
+    let prep_close = spawn_secs.saturating_add(PROD_PREP_SECS);
+    let reveal_close = prep_close.saturating_add(PROD_REVEAL_GRACE_SECS);
+    let standard = compute_production_phases_from_block(next_block);
+    PhaseTimestamps {
+        phase_2_close: ts(prep_close),
+        crowd_commit_close: ts(prep_close),
+        phase_3_open: ts(prep_close),
+        phase_1_close: standard.phase_1_close,
+        crowd_reveal_close: ts(reveal_close),
+        phase_3_close: standard.phase_3_close,
+    }
+}
+
 /// Production: 3 × 8h blocks per UTC day — 3h prep, 3h reveal, 1h live.
 #[cfg(test)]
 pub fn compute_production_phases(now: Timestamp) -> PhaseTimestamps {
@@ -415,6 +431,19 @@ mod tests {
         assert!(!is_entry_open(after_prep, &race));
         assert!(!is_crowd_commit_open(after_prep, &race, false));
         assert!(is_crowd_reveal_open(after_prep, &race, false));
+    }
+
+    #[test]
+    fn pipeline_enrolling_prep_starts_when_running_prep_closes() {
+        let day_start = 1_700_000_000 - (1_700_000_000 % DAY_SECS);
+        let running = race_from_schedule(compute_production_phases_from_block(day_start));
+        let spawn = day_start + PROD_PREP_SECS;
+        let enrolling = race_from_schedule(compute_pipeline_enrolling_phases(&running, spawn));
+        assert_eq!(enrolling.phase_2_close.seconds(), spawn + PROD_PREP_SECS);
+        assert_eq!(enrolling.phase_3_close.seconds(), day_start + 2 * PROD_BLOCK_SECS);
+        let during_overlap = ts(spawn + ONE_HOUR);
+        assert!(!is_entry_open(during_overlap, &running));
+        assert!(is_entry_open(during_overlap, &enrolling));
     }
 
     #[test]

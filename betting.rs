@@ -1,11 +1,11 @@
 use crate::error::ContractError;
-use crate::phases::is_betting_open;
-use crate::state::{BetType, SideBet, CONFIG, RACE_ENTRIES, RACE_GLOBAL, SIDE_BETS};
+use crate::slots::{betting_slot, load_slots, race_for_slot, save_slot_race};
+use crate::state::{BetType, SideBet, CONFIG, RACE_ENTRIES, SIDE_BETS};
 use crate::vault::{debit_vault_storage, require_no_native_funds};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response, Uint128};
 
 pub fn execute_place_side_bet(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     bet_type: crate::state::BetType,
@@ -18,11 +18,10 @@ pub fn execute_place_side_bet(
     }
 
     let config = CONFIG.load(deps.storage)?;
-    let mut race = RACE_GLOBAL.load(deps.storage)?;
-
-    if !is_betting_open(env.block.time, &race, config.test_mode) {
-        return Err(ContractError::WrongPhase {});
-    }
+    let ctx = load_slots(deps.as_ref())?;
+    let slot = betting_slot(&ctx, env.block.time, config.test_mode)
+        .ok_or(ContractError::WrongPhase {})?;
+    let mut race = race_for_slot(&ctx, slot).clone();
 
     let race_id = race.current_race_id;
     if bet_type == BetType::RacerVictory {
@@ -54,11 +53,10 @@ pub fn execute_place_side_bet(
         .total_bet_pool
         .checked_add(amount)
         .map_err(|_| ContractError::InvalidAmount {})?;
-    RACE_GLOBAL.save(deps.storage, &race)?;
+    save_slot_race(&mut deps, slot, race)?;
 
     Ok(Response::new()
         .add_attribute("action", "place_side_bet")
-        .add_attribute("bettor", info.sender)
-        .add_attribute("amount", amount)
-        .add_attribute("denom", config.denom))
+        .add_attribute("race_id", race_id.to_string())
+        .add_attribute("bettor", info.sender))
 }

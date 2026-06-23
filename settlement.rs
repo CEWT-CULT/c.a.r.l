@@ -506,14 +506,13 @@ pub fn execute_settle_race(
     let winner = ranks.first().map(|(addr, _)| addr.clone());
     archive_settled_race(deps.branch(), race_id, &race, winner, env.block.time, false)?;
 
-    roll_next_race(deps.branch(), env.clone())?;
-    let next = RACE_GLOBAL.load(deps.storage)?;
+    let next_id = promote_or_roll_next(deps.branch(), env.clone())?;
 
     Ok(Response::new()
         .add_messages(msgs)
         .add_attribute("action", "settle_race")
         .add_attribute("race_id", race_id.to_string())
-        .add_attribute("advanced_to_race", next.current_race_id.to_string())
+        .add_attribute("advanced_to_race", next_id.unwrap_or(0).to_string())
         .add_attribute("runners", entries.len().to_string())
         .add_attribute("all_bets_off", all_bets_off.to_string())
         .add_attribute("species_tie_broken", species_tie_broken.to_string())
@@ -1048,11 +1047,26 @@ pub fn execute_advance_race(
         return Err(ContractError::NotSettled {});
     }
 
-    roll_next_race(deps, env)?;
+    let next_id = promote_or_roll_next(deps, env)?;
 
     Ok(Response::new()
         .add_attribute("action", "advance_race")
-        .add_attribute("new_race_id", (race.current_race_id + 1).to_string()))
+        .add_attribute("new_race_id", next_id.unwrap_or(0).to_string()))
+}
+
+pub fn promote_or_roll_next(mut deps: DepsMut, env: Env) -> Result<Option<u64>, ContractError> {
+    use crate::slots::clear_enrolling;
+    use crate::state::ENROLLING_RACE;
+
+    if let Some(enrolling) = ENROLLING_RACE.may_load(deps.storage)?.flatten() {
+        let race_id = enrolling.current_race_id;
+        RACE_GLOBAL.save(deps.storage, &enrolling)?;
+        clear_enrolling(deps)?;
+        return Ok(Some(race_id));
+    }
+    roll_next_race(deps.branch(), env)?;
+    let next = RACE_GLOBAL.load(deps.storage)?;
+    Ok(Some(next.current_race_id))
 }
 
 pub fn roll_next_race(deps: DepsMut, env: Env) -> Result<(), ContractError> {
@@ -1223,9 +1237,8 @@ fn finalize_rain_out_settlement(
 
     if action == "settle_race" {
         clear_race_preview(deps.branch(), race_id)?;
-        roll_next_race(deps.branch(), env.clone())?;
-        let next = RACE_GLOBAL.load(deps.storage)?;
-        response = response.add_attribute("advanced_to_race", next.current_race_id.to_string());
+        let next_id = promote_or_roll_next(deps.branch(), env.clone())?;
+        response = response.add_attribute("advanced_to_race", next_id.unwrap_or(0).to_string());
     }
 
     Ok(response)

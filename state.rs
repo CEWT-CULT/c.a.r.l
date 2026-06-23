@@ -208,6 +208,8 @@ pub struct RaceGlobal {
     pub last_preview_crank: Timestamp,
 }
 pub const RACE_GLOBAL: Item<RaceGlobal> = Item::new("race_global");
+/// Next race accepting entries/bets while `RACE_GLOBAL` is in reveal/live/settle.
+pub const ENROLLING_RACE: Item<Option<RaceGlobal>> = Item::new("enrolling_race");
 
 /// Full physics simulation cached on first preview crank (outcome fixed at reveal close).
 pub const RACE_PREVIEW_SIM: Map<(u64, Addr), RaceResult> = Map::new("race_preview_sim");
