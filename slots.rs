@@ -39,13 +39,13 @@ pub fn entry_slot(ctx: &SlotContext, now: Timestamp) -> Option<EntrySlot> {
 }
 
 pub fn betting_slot(ctx: &SlotContext, now: Timestamp, test_mode: bool) -> Option<EntrySlot> {
+    if !ctx.running.is_settled && is_betting_open(now, &ctx.running, test_mode) {
+        return Some(EntrySlot::Running);
+    }
     if let Some(ref enrolling) = ctx.enrolling {
         if is_betting_open(now, enrolling, test_mode) {
             return Some(EntrySlot::Enrolling);
         }
-    }
-    if !ctx.running.is_settled && is_betting_open(now, &ctx.running, test_mode) {
-        return Some(EntrySlot::Running);
     }
     None
 }
