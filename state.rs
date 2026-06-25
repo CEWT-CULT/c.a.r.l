@@ -149,6 +149,7 @@ pub fn zero_timestamp() -> Timestamp {
 /// Stored at settlement — bettors pull payouts via `ClaimWager` (O(1) writes per claim).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct SideBetSettlement {
+    /// Species of the 1st-place racer — tribe side bets win when they match.
     pub winning_species: Option<Species>,
     pub underdog_wins: bool,
     /// Overall race winner when side bets settled.

@@ -1,6 +1,6 @@
 use crate::error::ContractError;
 use crate::phases::{initial_race_phases, is_settlement_open, TICKS};
-use crate::species::{species_for_bet_type, ALL_SPECIES};
+use crate::species::species_for_bet_type;
 use crate::state::{
     default_user_profile, CrowdEntropy, RaceAction, RaceEntry, RaceGlobal, RaceResult,
     SideBet, SideBetSettlement, Species, UserProfile, CONFIG, CROWD_ENTROPY, RACE_ENTRIES,
@@ -535,59 +535,17 @@ fn bet_type_wins(
     bet_wins(bet, winning_species, underdog_wins, winning_racer)
 }
 
-/// Deterministic uniform index in `0..n` from seed (rejection sampling — no modulo bias).
-pub fn d420_pick_index(seed: &[u8], n: usize) -> usize {
-    if n <= 1 {
-        return 0;
-    }
-    let n = n as u32;
-    let limit = (65_536 / n) * n;
-    let mut round = 0u32;
-    loop {
-        let block = tie_break_block(seed, round);
-        let mut i = 0usize;
-        while i + 1 < block.len() {
-            let value = u16::from_be_bytes([block[i], block[i + 1]]) as u32;
-            if value < limit {
-                return (value % n) as usize;
-            }
-            i += 2;
-        }
-        round += 1;
-    }
-}
-
-fn tie_break_block(seed: &[u8], round: u32) -> Vec<u8> {
-    if round == 0 {
-        return seed.to_vec();
-    }
-    let mut material = Vec::with_capacity(seed.len() + 18);
-    material.extend_from_slice(b"carl/tie-break/v1");
-    material.extend_from_slice(seed);
-    material.extend_from_slice(&round.to_be_bytes());
-    sha256_bytes(&material)
-}
-
-/// Species with the most top-half finishers wins tribal desk; ties broken by d420.
-pub fn resolve_winning_species(
-    species_counts: &[(Species, u32)],
-    tie_break_seed: &[u8],
-) -> (Option<Species>, bool) {
-    if species_counts.is_empty() {
-        return (None, false);
-    }
-    let max = species_counts.iter().map(|(_, c)| *c).max().unwrap_or(0);
-    let leaders: Vec<Species> = species_counts
-        .iter()
-        .filter(|(_, c)| *c == max)
-        .map(|(s, _)| *s)
-        .collect();
-    if leaders.len() == 1 {
-        (Some(leaders[0]), false)
-    } else {
-        let idx = d420_pick_index(tie_break_seed, leaders.len());
-        (Some(leaders[idx]), true)
-    }
+/// Species of the 1st-place racer — tribe side bets win when this species matches.
+pub fn winning_species_from_ranks(
+    entries: &[(Addr, RaceEntry)],
+    ranks: &[(Addr, u32)],
+) -> Option<Species> {
+    ranks.first().and_then(|(winner_addr, _)| {
+        entries
+            .iter()
+            .find(|(a, _)| a == winner_addr)
+            .map(|(_, entry)| entry.species)
+    })
 }
 
 /// Side-bet pool: 20% house rake from the **losing** wagers only; winners keep stake + pro-rata share of the loser pool.
@@ -711,6 +669,7 @@ fn resolve_side_bets(
     bet_pool: Uint128,
     tie_break_seed: &[u8],
 ) -> Result<(SideBetSettlement, bool, bool), ContractError> {
+    let _ = tie_break_seed;
     let empty = SideBetSettlement {
         winning_species: None,
         underdog_wins: false,
@@ -734,13 +693,8 @@ fn resolve_side_bets(
 
     let winning_racer = ranks.first().map(|(addr, _)| addr.clone());
 
-    let species_counts: Vec<(Species, u32)> = ALL_SPECIES
-        .iter()
-        .map(|s| (*s, count_species_in_top_half(entries, ranks, *s)))
-        .collect();
-
-    let (winning_species, species_tie_broken) =
-        resolve_winning_species(&species_counts, tie_break_seed);
+    let winning_species = winning_species_from_ranks(entries, ranks);
+    let species_tie_broken = false;
 
     let underdog_wins = ranks.iter().any(|(addr, rank)| {
         *rank <= 2
@@ -1013,25 +967,6 @@ fn finalize_zero_payout_side_bets(
         }
     }
     Ok(closed)
-}
-
-fn count_species_in_top_half(
-    entries: &[(Addr, RaceEntry)],
-    ranks: &[(Addr, u32)],
-    species: Species,
-) -> u32 {
-    let half = (entries.len() as u32 + 1) / 2;
-    ranks
-        .iter()
-        .filter(|(_, rank)| *rank <= half)
-        .filter(|(addr, _)| {
-            entries
-                .iter()
-                .find(|(a, _)| a == addr)
-                .map(|(_, e)| e.species == species)
-                .unwrap_or(false)
-        })
-        .count() as u32
 }
 
 
@@ -1893,28 +1828,50 @@ mod tests {
     }
 
     #[test]
-    fn species_tie_d420_breaks_to_exactly_one_winner() {
-        let seed = sha256_bytes(b"d420-tie-break");
-        let counts = vec![(Species::Chicken, 4), (Species::Newt, 4)];
-        let (winner, tie_broken) = resolve_winning_species(&counts, &seed);
-        assert!(tie_broken);
-        assert!(winner.is_some());
-
-        let (w2, t2) = resolve_winning_species(&counts, &seed);
-        assert_eq!(winner, w2);
-        assert!(t2);
+    fn winning_species_is_first_place_species() {
+        let newt = Addr::unchecked("newt");
+        let chicken = Addr::unchecked("chicken");
+        let entries = vec![
+            (
+                newt.clone(),
+                RaceEntry {
+                    player: newt.clone(),
+                    nft_contract: Addr::unchecked("nft"),
+                    nft_id: "624".into(),
+                    species: Species::Newt,
+                    commitment: Binary::default(),
+                    revealed_action: Some(RaceAction::Cheerleader),
+                    revealed_salt: Some("s".into()),
+                    final_rank: Some(1),
+                    nft_claimed: false,
+                    committed_at: crate::state::zero_timestamp(),
+                },
+            ),
+            (
+                chicken.clone(),
+                RaceEntry {
+                    player: chicken.clone(),
+                    nft_contract: Addr::unchecked("nft"),
+                    nft_id: "2227".into(),
+                    species: Species::Chicken,
+                    commitment: Binary::default(),
+                    revealed_action: Some(RaceAction::Cheerleader),
+                    revealed_salt: Some("s".into()),
+                    final_rank: Some(2),
+                    nft_claimed: false,
+                    committed_at: crate::state::zero_timestamp(),
+                },
+            ),
+        ];
+        let ranks = vec![(newt, 1), (chicken, 2)];
+        assert_eq!(
+            winning_species_from_ranks(&entries, &ranks),
+            Some(Species::Newt)
+        );
     }
 
     #[test]
-    fn d420_pick_index_is_deterministic_and_unbiased_by_rejection() {
-        let seed = sha256_bytes(b"uniform-tie-break");
-        assert_eq!(d420_pick_index(&seed, 2), d420_pick_index(&seed, 2));
-        assert!(d420_pick_index(&seed, 2) < 2);
-        assert_eq!(d420_pick_index(&seed, 1), 0);
-    }
-
-    #[test]
-    fn species_tie_d420_does_not_pay_both_sides() {
+    fn species_side_bet_pays_when_first_place_matches() {
         use crate::state::SideBet;
 
         let chicken_bettor = Addr::unchecked("chicken");
@@ -1944,10 +1901,7 @@ mod tests {
             ),
         ];
 
-        let seed = sha256_bytes(b"d420-tie-break");
-        let counts = vec![(Species::Chicken, 2), (Species::Newt, 2)];
-        let (winner, _) = resolve_winning_species(&counts, &seed);
-        let resolution = settle_side_bets(&bets, pool, winner, false, None);
+        let resolution = settle_side_bets(&bets, pool, Some(Species::Newt), false, None);
 
         let chicken_paid = resolution
             .credits
@@ -1962,13 +1916,8 @@ mod tests {
             .map(|(_, p)| *p)
             .unwrap_or_default();
 
-        if winner == Some(Species::Chicken) {
-            assert!(chicken_paid > Uint128::zero());
-            assert_eq!(newt_paid, Uint128::zero());
-        } else {
-            assert!(newt_paid > Uint128::zero());
-            assert_eq!(chicken_paid, Uint128::zero());
-        }
+        assert!(newt_paid > Uint128::zero());
+        assert_eq!(chicken_paid, Uint128::zero());
 
         let winner_paid: Uint128 = resolution.credits.iter().map(|(_, p)| *p).sum();
         assert_eq!(
